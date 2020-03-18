@@ -60,6 +60,9 @@ AssembleNodeSolverAlgorithm::initialize_connectivity()
 void
 AssembleNodeSolverAlgorithm::execute()
 {
+  // Hypre GPU Assembly needs this to be called even if it's not used yet. Do NOT remove.
+  auto coeffApplier = coeff_applier();
+
   // Handle transition period, it is likely that most of the user-requested
   // source terms were handled by the NGP version of nodal algorithm
   const size_t supplementalAlgSize = supplementalAlg_.size();
