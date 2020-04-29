@@ -863,7 +863,7 @@ HypreUVWLinearSystem::HypreUVWLinSysCoeffApplier::sum_into(
 
   unsigned nDim = numDof;
   HypreIntType hid0 = entityToLID_[entities[0].local_offset()];
-  HypreIntType counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid0, partitionIndex), 1); 
+  int counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid0, partitionIndex), 1); 
   HypreIntType nodeStart = partition_node_start_(hid0, partitionIndex);
 
   HypreIntType matIndex = mat_partition_start_(partitionIndex) + (nodeStart + counter)*mat_count_(partitionIndex);

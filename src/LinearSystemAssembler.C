@@ -75,9 +75,9 @@ struct lessThanOrdering64
 
 #define THREADBLOCK_SIZE 128
 
-__global__ void diffKernel(const HypreIntType N, const HypreIntType * x, int * y) {
+__global__ void castKernel(const HypreIntType N, const HypreIntType * x, int * y) {
   int tid = blockIdx.x*blockDim.x + threadIdx.x;
-  if (tid<N) y[tid] = (int)(x[tid+1] - x[tid]);
+  if (tid<N) y[tid] = (int)(x[tid]);
 }
 
 __global__ void shiftKernel(const HypreIntType N, const HypreIntType shift, const HypreIntType * x, HypreIntType * y) {
@@ -87,17 +87,18 @@ __global__ void shiftKernel(const HypreIntType N, const HypreIntType shift, cons
   }
 }
 
-__global__ void binPointersFinalKernel(const int N1, const HypreIntType N2, const HypreIntType * x, const HypreIntType * y, HypreIntType * z) {
+__global__ void binPointersFinalKernel(const int N1, const HypreIntType N2, const HypreIntType * x, const int * y, HypreIntType * z) {
   int tid = blockIdx.x*blockDim.x + threadIdx.x;
-  HypreIntType xx = 0, yy=0;
+  HypreIntType xx = 0;
+  int yy=0;
   if (tid<=N2) {
     xx = x[tid];
     yy = y[tid];
-    if (xx>0 && yy>0 && yy<=N1) z[yy] = xx;
+    if (xx>0 && yy>0 && yy<=N1) z[yy] = (HypreIntType)xx;
   }
 }
 
-__global__ void binPointersKernel(const HypreIntType * x, const HypreIntType N, HypreIntType * y, HypreIntType * z, int * bin_block_count) {
+__global__ void binPointersKernel(const HypreIntType * x, const HypreIntType N, HypreIntType * y, int * z, int * bin_block_count) {
   int tid = blockIdx.x*blockDim.x + threadIdx.x;
   
   /* load data into shmem */
@@ -112,11 +113,11 @@ __global__ void binPointersKernel(const HypreIntType * x, const HypreIntType N, 
   /* Compute the differences and store. If on the very last entry, store N */
   if (tid<N-1) {
     y[tid+1] = (tid+1)*(shmem[threadIdx.x+1]>shmem[threadIdx.x]?1:0);
-    z[tid+1] = shmem[threadIdx.x+1]>shmem[threadIdx.x]?1:0;
+    z[tid+1] = (int)(shmem[threadIdx.x+1]>shmem[threadIdx.x]?1:0);
     if (shmem[threadIdx.x+1]>shmem[threadIdx.x]) atomicAdd(&(bin_block_count[blockIdx.x]),1);
   } else if (tid==N-1) {
-    y[tid+1]=N;
-    z[tid+1]=1;
+    y[tid+1] = N;
+    z[tid+1] = (int)1;
     atomicAdd(&(bin_block_count[blockIdx.x]),1);
   }
 }
@@ -380,15 +381,13 @@ template<typename IntType>
 void sortRhs(thrust::device_ptr<IntType> _d_key_ptr,
              thrust::device_ptr<IntType> _d_key_ptr_end,
              thrust::device_ptr<double> _d_dkey_ptr,
-             thrust::device_ptr<double> _d_dkey_ptr_end,
-             thrust::device_ptr<double> _d_data_ptr);
+             thrust::device_ptr<double> _d_dkey_ptr_end);
 
 template<>
 void sortRhs(thrust::device_ptr<HypreIntType> _d_key_ptr,
              thrust::device_ptr<HypreIntType> _d_key_ptr_end,
              thrust::device_ptr<double> _d_dkey_ptr,
-             thrust::device_ptr<double> _d_dkey_ptr_end,
-             thrust::device_ptr<double> _d_data_ptr) {
+             thrust::device_ptr<double> _d_dkey_ptr_end) {
 
     typedef thrust::device_vector<HypreIntType>::iterator IntIterator;
     typedef thrust::device_vector<double>::iterator DoubleIterator;
@@ -396,7 +395,7 @@ void sortRhs(thrust::device_ptr<HypreIntType> _d_key_ptr,
     typedef thrust::zip_iterator<IteratorTuple> ZipIterator;
     ZipIterator iter_begin(thrust::make_tuple(_d_key_ptr, _d_dkey_ptr));
     ZipIterator iter_end(thrust::make_tuple(_d_key_ptr_end, _d_dkey_ptr_end));
-    thrust::stable_sort_by_key(thrust::device, iter_begin, iter_end, _d_data_ptr, lessThanOrdering64());
+    thrust::stable_sort(thrust::device, iter_begin, iter_end, lessThanOrdering64());
 }
 
 
@@ -406,8 +405,7 @@ void sortCooAscending(thrust::device_ptr<IntType> _d_key_ptr,
                       thrust::device_ptr<double> _d_dkey_ptr,
                       thrust::device_ptr<double> _d_dkey_ptr_end,
                       thrust::device_ptr<IntType> _d_rows_ptr,
-                      thrust::device_ptr<IntType> _d_cols_ptr,
-                      thrust::device_ptr<double> _d_data_ptr);
+                      thrust::device_ptr<IntType> _d_cols_ptr);
 
 template<>
 void sortCooAscending(thrust::device_ptr<HypreIntType> _d_key_ptr,
@@ -415,26 +413,68 @@ void sortCooAscending(thrust::device_ptr<HypreIntType> _d_key_ptr,
                       thrust::device_ptr<double> _d_dkey_ptr,
                       thrust::device_ptr<double> _d_dkey_ptr_end,
                       thrust::device_ptr<HypreIntType> _d_rows_ptr,
-                      thrust::device_ptr<HypreIntType> _d_cols_ptr,
-                      thrust::device_ptr<double> _d_data_ptr) {
+                      thrust::device_ptr<HypreIntType> _d_cols_ptr) {
 
     typedef thrust::device_vector<HypreIntType>::iterator IntIterator;
     typedef thrust::device_vector<double>::iterator DoubleIterator;
     typedef thrust::tuple<IntIterator, DoubleIterator> IteratorTuple;
     typedef thrust::zip_iterator<IteratorTuple> ZipIterator;
-    typedef thrust::tuple<IntIterator, IntIterator, DoubleIterator> IteratorTuple3;
-    typedef thrust::zip_iterator<IteratorTuple3> ZipIterator3;
+    typedef thrust::tuple<IntIterator, IntIterator> IteratorTuple2;
+    typedef thrust::zip_iterator<IteratorTuple2> ZipIterator2;
     ZipIterator iter_begin(thrust::make_tuple(_d_key_ptr, _d_dkey_ptr));
     ZipIterator iter_end(thrust::make_tuple(_d_key_ptr_end, _d_dkey_ptr_end));
-    ZipIterator3 iter3_begin(thrust::make_tuple(_d_rows_ptr, _d_cols_ptr, _d_data_ptr));
-    thrust::stable_sort_by_key(thrust::device, iter_begin, iter_end, iter3_begin, lessThanOrdering64());
+    ZipIterator2 iter2_begin(thrust::make_tuple(_d_rows_ptr, _d_cols_ptr));
+    thrust::stable_sort_by_key(thrust::device, iter_begin, iter_end, iter2_begin, lessThanOrdering64());
 }
 
 
 template<typename IntType>
-MatrixAssembler<IntType>::MatrixAssembler(std::string name, bool sort, IntType r0, IntType c0,
+MemoryController<IntType>::MemoryController(std::string name, IntType N)
+  : _name(name), _N(N)
+{
+#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
+  printf("\n%s %s %d : name=%s : N=%lld\n",
+	 __FILE__,__FUNCTION__,__LINE__,_name.c_str(),_N);
+#endif
+
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_bin_ptrs, (_N+1)*sizeof(IntType)));
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_locations, (_N+1)*sizeof(int)));
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_temp, (_N+1)*sizeof(IntType)));
+  int num_threads=128;
+  int num_blocks = (_N + 1 + num_threads - 1)/num_threads;  
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void**)&_d_bin_block_count, (num_blocks+1)*sizeof(int)));
+  _memoryUsed = sizeof(IntType)*(2*_N + 2) + sizeof(int)*(_N + 1)  + (num_blocks+1)*sizeof(int);
+
+#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
+  printf("Done %s %s %d : name=%s : N=%lld, Device Memory GBs=%1.6lf\n",
+	 __FILE__,__FUNCTION__,__LINE__,_name.c_str(),_N,memoryInGBs());
+#endif
+}
+
+template<typename IntType>
+MemoryController<IntType>::~MemoryController() {
+
+  if (_d_bin_ptrs) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_ptrs)); _d_bin_ptrs=NULL; }
+  if (_d_locations) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_locations)); _d_locations=NULL; }
+  if (_d_bin_block_count) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_block_count)); _d_bin_block_count=NULL; }
+  if (_d_temp) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_temp)); _d_temp=NULL; }
+}
+
+template<typename IntType>
+double MemoryController<IntType>::memoryInGBs() const {
+  return 1.0*_memoryUsed/(1024.*1024.*1024.);
+}
+
+//////////////////////////////////////////////////////////////////
+// Explicit template instantiation
+template class MemoryController<HypreIntType>;
+
+
+
+template<typename IntType>
+MatrixAssembler<IntType>::MatrixAssembler(std::string name, bool sort, bool ownsListInput, IntType r0, IntType c0,
 					  IntType num_rows, IntType num_cols, IntType nDataPtsToAssemble)
-  : _name(name), _sort(sort), _r0(r0), _c0(c0), _num_rows(num_rows), _num_cols(num_cols), 
+  : _name(name), _sort(sort), _ownsListInput(ownsListInput), _r0(r0), _c0(c0), _num_rows(num_rows), _num_cols(num_cols), 
     _nDataPtsToAssemble(nDataPtsToAssemble)
 {
 #ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
@@ -442,27 +482,21 @@ MatrixAssembler<IntType>::MatrixAssembler(std::string name, bool sort, IntType r
 #endif
 
   /* allocate some space */
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_rows, _nDataPtsToAssemble*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_cols, _nDataPtsToAssemble*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_key, _nDataPtsToAssemble*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_key_aux, _nDataPtsToAssemble*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_bin_ptrs, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_locations, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data, _nDataPtsToAssemble*sizeof(double)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data_aux, _nDataPtsToAssemble*sizeof(double)));
+  if (_ownsListInput) {
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_rows, _nDataPtsToAssemble*sizeof(IntType)));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_cols, _nDataPtsToAssemble*sizeof(IntType)));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data, _nDataPtsToAssemble*sizeof(double)));
+  }
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_row_offsets, (_num_rows+1)*sizeof(int)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_col_index_for_diagonal, _num_rows*sizeof(int)));
-  int num_threads=128;
-  int num_blocks = (_nDataPtsToAssemble + num_threads - 1)/num_threads;  
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void**)&_d_bin_block_count, (num_blocks+1)*sizeof(int)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_bin_ptrs_final, (_nDataPtsToAssemble+1)*sizeof(IntType)));
 
   /* Host Assemblies */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMallocHost((void **)&_h_row_offsets, (_num_rows+1)*sizeof(int)));
 
-  _memoryUsed = 7*sizeof(IntType)*_nDataPtsToAssemble + 2*sizeof(double)*_nDataPtsToAssemble 
-    + 3*sizeof(IntType) + (2*_num_rows+1)*sizeof(int) + (num_blocks+1)*sizeof(int);
-  
+  if (_ownsListInput) {
+    _memoryUsed = 2*_nDataPtsToAssemble*sizeof(IntType) + _nDataPtsToAssemble*sizeof(double) + (_num_rows+1)*sizeof(int);      
+  } else {
+    _memoryUsed = (_num_rows+1)*sizeof(int);      
+  }
   /* create events */
   cudaEventCreate(&_start);
   cudaEventCreate(&_stop);
@@ -476,6 +510,7 @@ MatrixAssembler<IntType>::MatrixAssembler(std::string name, bool sort, IntType r
 #endif
 }
 
+
 template<typename IntType>
 MatrixAssembler<IntType>::~MatrixAssembler() {
   //#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
@@ -486,17 +521,12 @@ MatrixAssembler<IntType>::~MatrixAssembler() {
   //#endif
   
   /* free the data */
-  if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }
-  if (_d_cols) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_cols)); _d_cols=NULL; }
-  if (_d_key) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_key)); _d_key=NULL; }
-  if (_d_key_aux) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_key_aux)); _d_key_aux=NULL; }
-  if (_d_bin_ptrs) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_ptrs)); _d_bin_ptrs=NULL; }
-  if (_d_locations) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_locations)); _d_locations=NULL; }
-  if (_d_data) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data)); _d_data=NULL; }
-  if (_d_data_aux) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data_aux)); _d_data_aux=NULL; }
+  if (_ownsListInput) {
+    if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }
+    if (_d_cols) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_cols)); _d_cols=NULL; }
+    if (_d_data) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data)); _d_data=NULL; }
+  }
   if (_d_col_index_for_diagonal) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_col_index_for_diagonal)); _d_col_index_for_diagonal=NULL; }
-  if (_d_bin_block_count) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_block_count)); _d_bin_block_count=NULL; }
-  if (_d_bin_ptrs_final) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_ptrs_final)); _d_bin_ptrs_final=NULL; }
 
   /* csr matrix */
   if (_d_row_offsets) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_row_offsets)); _d_row_offsets=NULL; }
@@ -540,14 +570,20 @@ void MatrixAssembler<IntType>::copySrcDataToDevice(const IntType * rows, const I
 }
 
 template<typename IntType>
-void MatrixAssembler<IntType>::copySrcDataFromKokkos(const IntType * rows, const IntType * cols, const double * data) {
+void MatrixAssembler<IntType>::copySrcDataFromKokkos(IntType * rows, IntType * cols, double * data) {
   /* record the start time */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_start));
 
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_rows, rows, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_cols, cols, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data, data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));
-  
+  if (_ownsListInput) {
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_rows, rows, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_cols, cols, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data, data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));
+  } else {
+    _d_rows = rows;
+    _d_cols = cols;
+    _d_data = data;
+  }
+
   /* record the stop time */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_stop));
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventSynchronize(_stop));
@@ -556,6 +592,14 @@ void MatrixAssembler<IntType>::copySrcDataFromKokkos(const IntType * rows, const
   _xferTime+=t;
 }
 
+template<typename IntType>
+void MatrixAssembler<IntType>::setTemporaryDataArrayPtrs(IntType * d_bin_ptrs, int * d_locations,
+							 IntType * d_temp, int * d_bin_block_count) {
+  _d_bin_ptrs = d_bin_ptrs;
+  _d_locations = d_locations;
+  _d_temp = d_temp;
+  _d_bin_block_count = d_bin_block_count;
+}
 
 template<typename IntType>
 void MatrixAssembler<IntType>::copyAssembledCSRMatrixToHost() {
@@ -600,27 +644,24 @@ void MatrixAssembler<IntType>::assemble() {
 
   /* reset */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_bin_ptrs, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_locations, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_locations, 0, (_nDataPtsToAssemble+1)*sizeof(int)));
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_row_offsets, 0, (_num_rows+1)*sizeof(int)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_bin_ptrs_final, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
 
   /* thrust pointers ... useful to define up front */
   thrust::device_ptr<IntType> _d_rows_ptr = thrust::device_pointer_cast(_d_rows);
   thrust::device_ptr<IntType> _d_rows_ptr_end = thrust::device_pointer_cast(_d_rows + _nDataPtsToAssemble);
   thrust::device_ptr<IntType> _d_cols_ptr = thrust::device_pointer_cast(_d_cols);
-  thrust::device_ptr<IntType> _d_key_ptr = thrust::device_pointer_cast(_d_key);
-  thrust::device_ptr<IntType> _d_key_ptr_end = thrust::device_pointer_cast(_d_key + _nDataPtsToAssemble);
+  thrust::device_ptr<IntType> _d_key_ptr = thrust::device_pointer_cast(_d_temp);
+  thrust::device_ptr<IntType> _d_key_ptr_end = thrust::device_pointer_cast(_d_temp + _nDataPtsToAssemble);
   thrust::device_ptr<double> _d_data_ptr = thrust::device_pointer_cast(_d_data);
+  thrust::device_ptr<double> _d_data_ptr_end = thrust::device_pointer_cast(_d_data + _nDataPtsToAssemble);
 
   /* Step 1 : compute the dense index */
   thrust::transform(thrust::device, _d_rows_ptr, _d_rows_ptr_end, _d_cols_ptr, _d_key_ptr, saxpy_functor(_num_cols));
   
   /* Step 2 : do a stable sort by key on the dense index. Apply the sorting to the 4pt tuple defined next */
   if (_sort) {
-    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data_aux, _d_data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));
-    thrust::device_ptr<double> _d_data_aux_ptr     = thrust::device_pointer_cast(_d_data_aux);
-    thrust::device_ptr<double> _d_data_aux_ptr_end = thrust::device_pointer_cast(_d_data_aux + _nDataPtsToAssemble);
-    sortCooAscending<IntType>(_d_key_ptr, _d_key_ptr_end, _d_data_aux_ptr, _d_data_aux_ptr_end, _d_rows_ptr, _d_cols_ptr, _d_data_ptr);
+    sortCooAscending<IntType>(_d_key_ptr, _d_key_ptr_end, _d_data_ptr, _d_data_ptr_end, _d_rows_ptr, _d_cols_ptr);
   } else {
     sortCoo<IntType>(_d_key_ptr, _d_key_ptr_end, _d_rows_ptr, _d_cols_ptr, _d_data_ptr);
   }
@@ -631,9 +672,14 @@ void MatrixAssembler<IntType>::assemble() {
   int num_threads=128;
   int num_blocks = (_nDataPtsToAssemble + num_threads - 1)/num_threads;    
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_bin_block_count, 0, (num_blocks+1)*sizeof(int)));
-  binPointersKernel<<<num_blocks,num_threads>>>(_d_key, _nDataPtsToAssemble, _d_bin_ptrs, _d_locations, _d_bin_block_count);
+  binPointersKernel<<<num_blocks,num_threads>>>(_d_temp, _nDataPtsToAssemble, _d_bin_ptrs, _d_locations, _d_bin_block_count);
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaGetLastError());
-    
+
+  /* get this value now. d_temp is going to be written over later in the algorithm */
+  IntType key;
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(&key, _d_temp, sizeof(IntType), cudaMemcpyDeviceToHost));
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_temp, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
+
   /* Step 4 : exclusive scan on the block count gives the relative positions of where to write the row pointers */
   thrust::inclusive_scan(thrust::device, 
 			 thrust::device_pointer_cast(_d_locations),
@@ -652,18 +698,16 @@ void MatrixAssembler<IntType>::assemble() {
   /* Step 6 : Compute the final row pointers array */
   num_blocks = (_nDataPtsToAssemble + 1 + num_threads - 1)/num_threads;  
   binPointersFinalKernel<<<num_blocks,num_threads>>>(_num_nonzeros, _nDataPtsToAssemble,
-						     _d_bin_ptrs, _d_locations, _d_bin_ptrs_final);
+						     _d_bin_ptrs, _d_locations, _d_temp);
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaGetLastError());  
 
   /* Step 7 : check for bogus indices */
-  IntType key;
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(&key, _d_key, sizeof(IntType), cudaMemcpyDeviceToHost));
   if (key<0) {
     IntType firstValidIndex[2];
-    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(firstValidIndex, _d_bin_ptrs_final, 2*sizeof(IntType), cudaMemcpyDeviceToHost));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(firstValidIndex, _d_temp, 2*sizeof(IntType), cudaMemcpyDeviceToHost));
     _nBogusPtsToIgnore = (firstValidIndex[1]-firstValidIndex[0]);
     int numBlocks = (_num_nonzeros + num_threads - 1)/num_threads;
-    shiftKernel<<<numBlocks,num_threads>>>(_num_nonzeros, _nBogusPtsToIgnore, _d_bin_ptrs_final, _d_bin_ptrs);
+    shiftKernel<<<numBlocks,num_threads>>>(_num_nonzeros, _nBogusPtsToIgnore, _d_temp, _d_bin_ptrs);
     
     _num_nonzeros -= 1;
 #ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
@@ -672,7 +716,7 @@ void MatrixAssembler<IntType>::assemble() {
 #endif
   } else {
     /* copy the temporary over to the permanent */
-    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_bin_ptrs, _d_bin_ptrs_final, (_num_nonzeros+1)*sizeof(IntType), cudaMemcpyDeviceToDevice));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_bin_ptrs, _d_temp, (_num_nonzeros+1)*sizeof(IntType), cudaMemcpyDeviceToDevice));
   }
 
   /* Allocate space for the CSR matrix */
@@ -736,6 +780,7 @@ void MatrixAssembler<IntType>::reorderDLU() {
   int num_blocks = (_num_rows + num_rows_per_block - 1)/num_rows_per_block;
   
   /* compute the location of the diagonal in each row */
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_col_index_for_diagonal, _num_rows*sizeof(int)));
   findDiagonalElementKernel<<<num_blocks,num_threads>>>(_num_rows, threads_per_row, _d_row_offsets, 
 							_d_col_indices, _d_col_index_for_diagonal);
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaGetLastError());
@@ -771,29 +816,28 @@ template class MatrixAssembler<HypreIntType>;
 
 
 template<typename IntType>
-RhsAssembler<IntType>::RhsAssembler(std::string name, bool sort, IntType r0, IntType num_rows, IntType nDataPtsToAssemble)
-  : _name(name), _sort(sort), _r0(r0), _num_rows(num_rows), _nDataPtsToAssemble(nDataPtsToAssemble)
+RhsAssembler<IntType>::RhsAssembler(std::string name, bool sort, bool ownsListInput, IntType r0, 
+				    IntType num_rows, IntType nDataPtsToAssemble)
+  : _name(name), _sort(sort), _ownsListInput(ownsListInput), _r0(r0), _num_rows(num_rows), _nDataPtsToAssemble(nDataPtsToAssemble)
 {
 #ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
   printf("\n%s %s %d : name=%s\n",__FILE__,__FUNCTION__,__LINE__,_name.c_str());
 #endif
   
   /* allocate some space */
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_rows, _nDataPtsToAssemble*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_bin_ptrs, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_locations, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data, _nDataPtsToAssemble*sizeof(double)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data_aux, _nDataPtsToAssemble*sizeof(double)));
-  int num_threads=128;
-  int num_blocks = (_nDataPtsToAssemble + num_threads - 1)/num_threads;  
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void**)&_d_bin_block_count, (num_blocks+1)*sizeof(int)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_bin_ptrs_final, (_nDataPtsToAssemble+1)*sizeof(IntType)));
+  if (_ownsListInput) {
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_rows, _nDataPtsToAssemble*sizeof(IntType)));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_data, _nDataPtsToAssemble*sizeof(double)));
+  }
 
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMalloc((void **)&_d_rhs, _num_rows*sizeof(double)));
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMallocHost((void **)&_h_rhs, _num_rows*sizeof(double)));
-  
-  _memoryUsed = 4*sizeof(IntType)*_nDataPtsToAssemble + 2*sizeof(double)*_nDataPtsToAssemble + 3*sizeof(IntType) + sizeof(double)*_num_rows + (num_blocks+1)*sizeof(int);
-  
+
+  if (_ownsListInput) {
+    _memoryUsed = sizeof(IntType)*_nDataPtsToAssemble + sizeof(double)*(_nDataPtsToAssemble + _num_rows);
+  } else {  
+    _memoryUsed = sizeof(double)*(_num_rows);
+  }
   
   /* create events */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventCreate(&_start));
@@ -817,13 +861,10 @@ RhsAssembler<IntType>::~RhsAssembler() {
   //#endif
 
   /* free the data */
-  if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }
-  if (_d_bin_ptrs) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_ptrs)); _d_bin_ptrs=NULL; }
-  if (_d_locations) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_locations)); _d_locations=NULL; }
-  if (_d_data) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data)); _d_data=NULL; }
-  if (_d_data_aux) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data_aux)); _d_data_aux=NULL; }
-  if (_d_bin_block_count) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_block_count)); _d_bin_block_count=NULL; }
-  if (_d_bin_ptrs_final) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_bin_ptrs_final)); _d_bin_ptrs_final=NULL; }
+  if (_ownsListInput) {
+    if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }
+    if (_d_data) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_data)); _d_data=NULL; }
+  }
 
   if (_d_rhs) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rhs)); _d_rhs=NULL; }
   if (_h_rhs) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFreeHost(_h_rhs)); _d_rhs=NULL; }
@@ -846,6 +887,27 @@ void RhsAssembler<IntType>::copySrcDataToDevice(const IntType * rows, const doub
   
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_rows, rows, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyHostToDevice));
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data, data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyHostToDevice));
+
+  /* record the stop time */
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_stop));
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventSynchronize(_stop));
+  float t=0;
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventElapsedTime(&t, _start, _stop));
+  _xferTime+=t;
+}
+
+template<typename IntType>
+void RhsAssembler<IntType>::copySrcDataFromKokkos(IntType * rows, double * data) {
+  /* record the start time */
+  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_start));
+  
+  if (_ownsListInput) {
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_rows, rows, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
+    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data, data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));
+  } else {
+    _d_rows = rows;
+    _d_data = data;
+  }
   
   /* record the stop time */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_stop));
@@ -856,20 +918,14 @@ void RhsAssembler<IntType>::copySrcDataToDevice(const IntType * rows, const doub
 }
 
 template<typename IntType>
-void RhsAssembler<IntType>::copySrcDataFromKokkos(const IntType * rows, const double * data) {
-  /* record the start time */
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_start));
-  
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_rows, rows, _nDataPtsToAssemble*sizeof(IntType), cudaMemcpyDeviceToDevice));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data, data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));
-  
-  /* record the stop time */
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventRecord(_stop));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventSynchronize(_stop));
-  float t=0;
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaEventElapsedTime(&t, _start, _stop));
-  _xferTime+=t;
+void RhsAssembler<IntType>::setTemporaryDataArrayPtrs(IntType * d_bin_ptrs, int * d_locations,
+						      IntType * d_temp, int * d_bin_block_count) {
+  _d_bin_ptrs = d_bin_ptrs;
+  _d_locations = d_locations;
+  _d_bin_ptrs_final = d_temp;
+  _d_bin_block_count = d_bin_block_count;
 }
+
 
 template<typename IntType>
 void RhsAssembler<IntType>::copyAssembledRhsVectorToHost() {
@@ -909,21 +965,19 @@ void RhsAssembler<IntType>::assemble() {
 
   /* reset */
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_bin_ptrs, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
-  MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_locations, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
+MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_locations, 0, (_nDataPtsToAssemble+1)*sizeof(int)));
   MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemset(_d_bin_ptrs_final, 0, (_nDataPtsToAssemble+1)*sizeof(IntType)));
 
   /* thrust pointers ... useful to define up front */
   thrust::device_ptr<IntType> _d_rows_ptr = thrust::device_pointer_cast(_d_rows);
   thrust::device_ptr<IntType> _d_rows_ptr_end = thrust::device_pointer_cast(_d_rows + _nDataPtsToAssemble);
   thrust::device_ptr<double> _d_data_ptr = thrust::device_pointer_cast(_d_data);
-  thrust::device_ptr<double> _d_data_aux_ptr = thrust::device_pointer_cast(_d_data_aux);
-  thrust::device_ptr<double> _d_data_aux_ptr_end = thrust::device_pointer_cast(_d_data_aux + _nDataPtsToAssemble);
+  thrust::device_ptr<double> _d_data_ptr_end = thrust::device_pointer_cast(_d_data + _nDataPtsToAssemble);
   
   /* Step 1 : do a stable sort by key */
   if (_sort) {
     /* here we sort on the tuple row,data pair. */
-    MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaMemcpy(_d_data_aux, _d_data, _nDataPtsToAssemble*sizeof(double), cudaMemcpyDeviceToDevice));      
-    sortRhs<IntType>(_d_rows_ptr, _d_rows_ptr_end, _d_data_aux_ptr, _d_data_aux_ptr_end, _d_data_ptr);
+    sortRhs<IntType>(_d_rows_ptr, _d_rows_ptr_end, _d_data_ptr, _d_data_ptr_end);
   } else {
     /* here we only sort on the row */
     thrust::stable_sort_by_key(thrust::device, _d_rows_ptr, _d_rows_ptr_end, _d_data);

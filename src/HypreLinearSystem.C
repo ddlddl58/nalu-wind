@@ -1192,7 +1192,7 @@ HypreLinearSystem::HypreLinSysCoeffApplier::HypreLinSysCoeffApplier(unsigned num
 
   /* This 2D array gets atomically incremented each time we read the hid of the first
      node in each group of entities */
-  partition_node_count_ = HypreIntTypeView2D("partition_node_count_", numRows_, numPartitions_);
+  partition_node_count_ = IntTypeView2D("partition_node_count_", numRows_, numPartitions_);
 
   /* storage for the matrix lists */
   rows_ = HypreIntTypeView("rows_",numMatPtsToAssembleTotal_ + numRows_);
@@ -1242,7 +1242,7 @@ HypreLinearSystem::HypreLinSysCoeffApplier::sum_into(
   HypreIntType partitionIndex) {
   
   HypreIntType hid0 = entityToLID_[entities[0].local_offset()];
-  HypreIntType counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid0, partitionIndex), 1); 
+  int counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid0, partitionIndex), 1); 
   HypreIntType nodeStart = partition_node_start_(hid0, partitionIndex);
   HypreIntType matIndex = mat_partition_start_(partitionIndex) + (nodeStart + counter)*mat_count_(partitionIndex);
   HypreIntType rhsIndex = rhs_partition_start_(partitionIndex) + (nodeStart + counter)*rhs_count_(partitionIndex);
@@ -1512,7 +1512,7 @@ HypreLinearSystem::HypreLinSysCoeffApplier::applyDirichletBCs(Realm & realm,
       HypreIntType hid = entityToLID_[entity.local_offset()];
 
       /* This stuff doesn't work any more */
-      HypreIntType counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid, partition_index_()), 1); 
+      int counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid, partition_index_()), 1); 
       HypreIntType nodeStart = partition_node_start_(hid, partition_index_());
       HypreIntType matIndex = mat_partition_start_(partition_index_()) + (nodeStart + counter)*mat_count_(partition_index_());
       HypreIntType rhsIndex = rhs_partition_start_(partition_index_()) + (nodeStart + counter)*rhs_count_(partition_index_());
@@ -1568,13 +1568,28 @@ HypreLinearSystem::HypreLinSysCoeffApplier::finishAssembly(void * mat, std::vect
 
 #ifdef KOKKOS_ENABLE_CUDA
 
+  /*********************************************************************/
+  /* Memory Controller : shares temporaries between the Matrix and Rhs */
+  /*********************************************************************/
+
+  if (!MemController_) {
+    HypreIntType n1 = numMatPtsToAssembleTotal_+numRows_;
+    HypreIntType n2 = numRhsPtsToAssembleTotal_+numRows_;
+    MemController_ = new MemoryController<HypreIntType>(name,n1>n2 ? n1 : n2);
+  }
+
   /**********/
   /* Matrix */
   /**********/
 
   /* Build the assembler objects */
   if (!MatAssembler_)
-    MatAssembler_ = new MatrixAssembler<HypreIntType>(name,true,iLower_,jLower_,numRows_,numRows_,numMatPtsToAssembleTotal_+numRows_);
+    MatAssembler_ = new MatrixAssembler<HypreIntType>(name,true,false,iLower_,jLower_,numRows_,numRows_,
+						      numMatPtsToAssembleTotal_+numRows_);
+
+  /* set the temporaries from the memory controller ... ugly but it works for the time beign */
+  MatAssembler_->setTemporaryDataArrayPtrs(MemController_->get_d_bin_ptrs(), MemController_->get_d_locations(), 
+					   MemController_->get_d_temp(), MemController_->get_d_bin_block_count());
 
   MatAssembler_->copySrcDataFromKokkos(rows_.data(), cols_.data(), vals_.data());
   MatAssembler_->assemble();
@@ -1611,9 +1626,14 @@ HypreLinearSystem::HypreLinSysCoeffApplier::finishAssembly(void * mat, std::vect
 
   /* Build the assembler objects */
   if (!RhsAssembler_)
-    RhsAssembler_ = new RhsAssembler<HypreIntType>(name,true,iLower_,numRows_,numRhsPtsToAssembleTotal_+numRows_);
+    RhsAssembler_ = new RhsAssembler<HypreIntType>(name,true,false,iLower_,numRows_,numRhsPtsToAssembleTotal_+numRows_);
+
+  /* set the temporaries from the memory controller ... ugly but it works for the time beign */
+  RhsAssembler_->setTemporaryDataArrayPtrs(MemController_->get_d_bin_ptrs(), MemController_->get_d_locations(), 
+					   MemController_->get_d_temp(), MemController_->get_d_bin_block_count());
 
   for (unsigned i=0; i<numDof_; ++i) {
+
     /* get the src data from the kokkos views */
     RhsAssembler_->copySrcDataFromKokkos(&rhs_rows_(0,i), &rhs_vals_(0,i));
     RhsAssembler_->assemble();

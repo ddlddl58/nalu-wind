@@ -52,6 +52,9 @@ using DoubleView2DHost = DoubleView2D::HostMirror;
 using HypreIntTypeView = Kokkos::View<HypreIntType*>;
 using HypreIntTypeViewHost = HypreIntTypeView::HostMirror;
 
+using IntTypeView2D = Kokkos::View<int**>;
+using IntTypeView2DHost = IntTypeView2D::HostMirror;
+
 using HypreIntTypeView2D = Kokkos::View<HypreIntType**>;
 using HypreIntTypeView2DHost = HypreIntTypeView2D::HostMirror;
 
@@ -170,6 +173,7 @@ public:
     KOKKOS_FUNCTION
     virtual ~HypreLinSysCoeffApplier() {
 #ifdef KOKKOS_ENABLE_CUDA
+      if (MemController_) { delete MemController_; MemController_=NULL; }
       if (MatAssembler_) { delete MatAssembler_; MatAssembler_=NULL; }
       if (RhsAssembler_) { delete RhsAssembler_; RhsAssembler_=NULL; }
       if (_nAssembleMat>0) {
@@ -266,7 +270,7 @@ public:
     HypreIntTypeViewScalarHost partition_index_host;
 
     //! 2D data structure to atomically update for augmenting the list */
-    HypreIntTypeView2D partition_node_count_;
+    IntTypeView2D partition_node_count_;
 
     HypreIntTypeViewScalar mat_partition_total_;
     HypreIntTypeViewScalar rhs_partition_total_;    
@@ -301,6 +305,8 @@ public:
     HypreIntTypeViewScalar checkSkippedRows_;
 
 #ifdef KOKKOS_ENABLE_CUDA
+    //! The Memory Controller ... used for temporaries that can be shared between Matrix and Rhs assemblies
+    MemoryController<HypreIntType> * MemController_=nullptr;
     //! The Matrix assembler
     MatrixAssembler<HypreIntType> * MatAssembler_=nullptr;
     //! The Rhs assembler

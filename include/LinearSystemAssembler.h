@@ -22,10 +22,60 @@
 #ifndef LINEAR_SYSTEM_ASSEMBLER_DEBUG
 #define LINEAR_SYSTEM_ASSEMBLER_DEBUG
 #endif // LINEAR_SYSTEM_ASSEMBLER_DEBUG
-#undef LINEAR_SYSTEM_ASSEMBLER_DEBUG
+//#undef LINEAR_SYSTEM_ASSEMBLER_DEBUG
 
 namespace sierra {
 namespace nalu {
+
+template<typename IntType>
+class MemoryController {
+
+public:
+
+  /**
+   * MemoryController Constructor controls the allocation of temporary memory, which can be
+   *  shared between Matrix and Rhs assembles
+   *
+   * @param name of the linear system being assembled
+   * @param N the amount of memory to allocate
+   */
+  MemoryController(std::string name, IntType N);
+
+  /**
+   *  Destructor 
+   */
+  virtual ~MemoryController();
+
+  /**
+   * memoryInGBS computes the amount of device memory used in GBs
+   *
+   * @return the amount of device memory used in GBs
+   */
+
+  double memoryInGBs() const;
+
+
+  IntType * get_d_bin_ptrs() { return _d_bin_ptrs; }
+  int * get_d_locations() { return _d_locations; }
+  IntType * get_d_temp() { return _d_temp; }
+  int * get_d_bin_block_count() { return _d_bin_block_count; }
+
+protected:
+
+private:
+
+  /* amount of memory being used */
+  std::string _name="";
+  IntType _memoryUsed=0;
+  IntType _N=0;
+
+  /* Cuda pointers and allocations for temporaries */
+  IntType * _d_bin_ptrs=NULL;
+  int * _d_locations=NULL;
+  IntType * _d_temp=NULL;
+  int * _d_bin_block_count=NULL;
+
+};
 
 template<typename IntType>
 class MatrixAssembler {
@@ -37,13 +87,14 @@ public:
    *
    * @param name of the linear system being assembled
    * @param sort whether or not to sort the CSR matrix (prior to full assembly) based on the element ids
+   * @param ownsListInput whether or not this class owns the input coordinate list device arrays
    * @param r0 first row
    * @param c0 first column
    * @param num_rows number of rows
    * @param num_cols number of columns
    * @param nDataPtsToAssemble the number of data points to assemble into a CSR matrix
    */
-  MatrixAssembler(std::string name, bool sort, IntType r0, IntType c0,
+  MatrixAssembler(std::string name, bool sort, bool ownsListInput, IntType r0, IntType c0,
 		  IntType num_rows, IntType num_cols, IntType nDataPtsToAssemble);
 
   /**
@@ -81,7 +132,18 @@ public:
    * @param cols host pointer for the column coordinates
    * @param data host pointer for the data values
    */
-  void copySrcDataFromKokkos(const IntType * rows, const IntType * cols, const double * data);
+  void copySrcDataFromKokkos(IntType * rows, IntType * cols, double * data);
+
+  /**
+   * setTemporaryDataArrayPtrs this function assigns pointers to the temporary data arrays needed in assembly
+   *
+   * @param d_bin_ptrs device bin pointers
+   * @param d_locations device locations
+   * @param d_temp device temporary used in multiple kernels
+   * @param d_bin_block_count device bin block count
+   */
+  void setTemporaryDataArrayPtrs(IntType * d_bin_ptrs, int * d_locations,
+				 IntType * d_temp, int * d_bin_block_count);
 
   /**
    * copyAssembledCSRMatrixToHost copies the assembled CSR matrix to the host (page locked memory)
@@ -161,6 +223,7 @@ private:
   /* meta data */
   std::string _name="";
   bool _sort=false;
+  bool _ownsListInput=true;
   IntType _r0=0;
   IntType _c0=0;
   IntType _num_rows=0;
@@ -170,15 +233,13 @@ private:
 
   /* Cuda pointers and allocations for temporaries */
   IntType * _d_rows=NULL, *_d_cols=NULL;
-  double * _d_data=NULL, * _d_data_aux=NULL;
+  double * _d_data=NULL;
   IntType * _d_bin_ptrs=NULL;
-  IntType * _d_key=NULL;
-  IntType * _d_key_aux=NULL;
-  IntType * _d_locations=NULL;
+  int * _d_locations=NULL;
+  IntType * _d_temp=NULL;
   int *_d_col_index_for_diagonal=NULL;
-  bool _col_index_determined=false;
   int * _d_bin_block_count=NULL;
-  IntType * _d_bin_ptrs_final = NULL;
+  bool _col_index_determined=false;
   bool _csrMatMemoryAdded=false;
 };
 
@@ -194,11 +255,12 @@ public:
    *
    * @param name of the linear system being assembled
    * @param sort whether or not to sort the CSR matrix (prior to full assembly) based on the element ids
+   * @param ownsListInput whether or not this class owns the input coordinate list device arrays
    * @param r0 first row
    * @param num_rows number of rows
    * @param nDataPtsToAssemble the number of data points to assemble into a CSR matrix
    */
-  RhsAssembler(std::string name, bool sort, IntType r0, IntType num_rows, IntType nDataPtsToAssemble);
+  RhsAssembler(std::string name, bool sort, bool ownsListInput, IntType r0, IntType num_rows, IntType nDataPtsToAssemble);
 
   /**
    *  Destructor 
@@ -226,7 +288,18 @@ public:
    * @param rows host pointer for the row coordinates
    * @param data host pointer for the data values
    */
-  void copySrcDataFromKokkos(const IntType * rows, const double * data);
+  void copySrcDataFromKokkos(IntType * rows, double * data);
+
+  /**
+   * setTemporaryDataArrayPtrs this function assigns pointers to the temporary data arrays needed in assembly
+   *
+   * @param d_bin_ptrs device bin pointers
+   * @param d_locations device locations
+   * @param d_temp device temporary used in multiple kernels
+   * @param d_bin_block_count device bin block count
+   */
+  void setTemporaryDataArrayPtrs(IntType * d_bin_ptrs, int * d_locations,
+				 IntType * d_temp, int * d_bin_block_count);
 
   /**
    * copyAssembledRhsVectorToHost copies the assembled RhsVector to the host (page locked memory)
@@ -274,6 +347,7 @@ private:
   /* meta data */
   std::string _name="";
   bool _sort=false;
+  bool _ownsListInput=true;
   IntType _r0=0;
   IntType _num_rows=0;
   IntType _nDataPtsToAssemble=0;
@@ -281,10 +355,9 @@ private:
 
   /* Cuda pointers and allocations for temporaries */
   IntType * _d_rows=NULL;
-  IntType * _d_bin_ptrs=NULL;
-  IntType * _d_locations=NULL;
   double * _d_data=NULL;
-  double * _d_data_aux=NULL;
+  IntType * _d_bin_ptrs=NULL;
+  int * _d_locations=NULL;
   int * _d_bin_block_count=NULL;
   IntType * _d_bin_ptrs_final = NULL;
 };
