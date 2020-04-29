@@ -761,44 +761,24 @@ sierra::nalu::CoeffApplier* HypreUVWLinearSystem::get_coeff_applier()
 
     /******************************************************/
     /* Construct the Partition Node Start Data structures */
-    for (unsigned i=0; i<numPartitions; ++i) {
-      for (unsigned j=0; j<numRows_; ++j) {
-	partition_node_start_host(j,i) = partitionNodeStart_[i][j];
-      }
-    }
-    Kokkos::deep_copy(partition_node_start_host, partition_node_start);
-
-    /**************************************************/
     /* Construct the Matrix Partition Data structures */
-    for (unsigned i=0; i<numPartitions; ++i) {
-      /* set the counts */
-      mat_count_host(i) = count_[i];
-      /* the number of points to assemble */
-      numMatPtsToAssembleTotal += partitionCount_[i]*mat_count_host(i);
-      /* compute the start */
-      mat_partition_start_host(i) = numMatPtsToAssembleTotal - partitionCount_[i]*mat_count_host(i);
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG
-      printf("Matrix partition %d : total in partition=%d, count per element=%d, partitionStart=%d, total=%d\n",
-	     i,(int)partitionCount_[i],(int)mat_count_host(i),(int)mat_partition_start_host(i),(int)numMatPtsToAssembleTotal);
-#endif
-    }
-    Kokkos::deep_copy(mat_count, mat_count_host);
-    Kokkos::deep_copy(mat_partition_start, mat_partition_start_host);
-
-    /***********************************************/
     /* Construct the Rhs Partition Data structures */
     for (unsigned i=0; i<numPartitions; ++i) {
-      /* set the counts */
+      mat_count_host(i) = count_[i];
       rhs_count_host(i) = sqrt(count_[i]);
-      /* se the number of points to assemble */
+
+      numMatPtsToAssembleTotal += partitionCount_[i]*mat_count_host(i);
+      mat_partition_start_host(i) = numMatPtsToAssembleTotal - partitionCount_[i]*mat_count_host(i);
+
       numRhsPtsToAssembleTotal += partitionCount_[i]*rhs_count_host(i);
-      /* compute the start */
       rhs_partition_start_host(i) = numRhsPtsToAssembleTotal - partitionCount_[i]*rhs_count_host(i);
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG
-      printf("Rhs partition %d : total in partition=%d, count per element=%d, partitionStart=%d, total=%d\n",
-	     i,(int)partitionCount_[i],(int)rhs_count_host(i),(int)rhs_partition_start_host(i),(int)numRhsPtsToAssembleTotal);
-#endif
+
+      for (unsigned j=0; j<numRows_; ++j)
+	partition_node_start_host(j,i) = partitionNodeStart_[i][j];
     }
+    Kokkos::deep_copy(partition_node_start, partition_node_start_host);
+    Kokkos::deep_copy(mat_count, mat_count_host);
+    Kokkos::deep_copy(mat_partition_start, mat_partition_start_host);
     Kokkos::deep_copy(rhs_count, rhs_count_host);
     Kokkos::deep_copy(rhs_partition_start, rhs_partition_start_host);
 
@@ -885,6 +865,7 @@ HypreUVWLinearSystem::HypreUVWLinSysCoeffApplier::sum_into(
   HypreIntType hid0 = entityToLID_[entities[0].local_offset()];
   HypreIntType counter = Kokkos::atomic_fetch_add(&partition_node_count_(hid0, partitionIndex), 1); 
   HypreIntType nodeStart = partition_node_start_(hid0, partitionIndex);
+
   HypreIntType matIndex = mat_partition_start_(partitionIndex) + (nodeStart + counter)*mat_count_(partitionIndex);
   HypreIntType rhsIndex = rhs_partition_start_(partitionIndex) + (nodeStart + counter)*rhs_count_(partitionIndex);
 
@@ -901,9 +882,10 @@ HypreUVWLinearSystem::HypreUVWLinSysCoeffApplier::sum_into(
 
     int offset = 0;
     for (unsigned k=0; k<numEntities; k++) {
-      rows_(matIndex+i*numEntities+k) = hid;
-      cols_(matIndex+i*numEntities+k) = localIds[k];
-      vals_(matIndex+i*numEntities+k) = lhs(ix, offset);
+      unsigned index = i*numEntities+k;
+      rows_(matIndex+index) = hid;
+      cols_(matIndex+index) = localIds[k];
+      vals_(matIndex+index) = lhs(ix, offset);
       offset += nDim;
     }
 

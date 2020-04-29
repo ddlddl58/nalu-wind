@@ -478,12 +478,12 @@ MatrixAssembler<IntType>::MatrixAssembler(std::string name, bool sort, IntType r
 
 template<typename IntType>
 MatrixAssembler<IntType>::~MatrixAssembler() {
-#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
+  //#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
   printf("\n%s %s %d : name=%s\n",__FILE__,__FUNCTION__,__LINE__,_name.c_str());
   if (_nAssemble>0)
     printf("Mean Symbolic/Numeric Assembly Time (%d samples)=%1.5f msec, Data Xfer Time From Kokkos=%1.5f msec, Data Xfer Time To Host=%1.5f msec\n",
 	   _nAssemble,_assembleTime/_nAssemble,_xferTime/_nAssemble,_xferHostTime/_nAssemble);
-#endif
+  //#endif
   
   /* free the data */
   if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }
@@ -809,12 +809,12 @@ RhsAssembler<IntType>::RhsAssembler(std::string name, bool sort, IntType r0, Int
 
 template<typename IntType>
 RhsAssembler<IntType>::~RhsAssembler() {
-#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
+  //#ifdef LINEAR_SYSTEM_ASSEMBLER_DEBUG
   printf("\n%s %s %d : name=%s\n",__FILE__,__FUNCTION__,__LINE__,_name.c_str());
   if (_nAssemble>0)
     printf("Mean RHS Assembly Time (%d samples)=%1.5f msec, Data Xfer Time From Kokkos=%1.5f msec, Data Xfer Time To Host=%1.5f msec\n",
 	   _nAssemble,_assembleTime/_nAssemble,_xferTime/_nAssemble,_xferHostTime/_nAssemble);
-#endif
+  //#endif
 
   /* free the data */
   if (_d_rows) { MATRIX_ASSEMBLER_CUDA_SAFE_CALL(cudaFree(_d_rows)); _d_rows=NULL; }

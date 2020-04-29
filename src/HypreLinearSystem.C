@@ -902,15 +902,7 @@ HypreLinearSystem::dumpHypreMatrix()
   HYPRE_Int num_nonzeros = diag->num_nonzeros;
     
   char fname[200];
-#if !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS) && !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU)
   std::string extension="";
-#else
-#if defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS)
-  std::string extension="FromCPULoadLists";
-#else
-  std::string extension="FromCPULoad";
-#endif
-#endif
 
   sprintf(fname,"%s_HypreRows%s%d.bin",name_.c_str(),extension.c_str(),numAssembles_);
   std::ofstream hrfile(fname, std::ios::out | std::ios::binary);
@@ -965,15 +957,7 @@ HypreLinearSystem::dumpHypreRhs()
   HYPRE_Int num_rows = diag->num_rows;
 
   char fname[200];
-#if !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS) && !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU)
   std::string extension="";
-#else
-#if defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS)
-  std::string extension="FromCPULoadLists";
-#else
-  std::string extension="FromCPULoad";
-#endif
-#endif
     
   double * local_data = hypre_VectorData(hypre_ParVectorLocalVector(solver->parRhs_));
   sprintf(fname,"%s_HypreRHSData%s%d_0.bin",name_.c_str(),extension.c_str(),numAssembles_);
@@ -1012,80 +996,6 @@ HypreLinearSystem::loadCompleteSolver()
   /* dump the matrix */
   dumpHypreMatrix();
   dumpHypreRhs();
-
-#ifdef KOKKOS_ENABLE_CUDA
-
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU
-
-  hypre_CSRMatrix * diag = hypre_ParCSRMatrixDiag((HYPRE_ParCSRMatrix) (solver->parMat_));
-  HYPRE_Int num_rows = diag->num_rows;
-  HYPRE_Int num_nonzeros = diag->num_nonzeros;
-
-  HYPRE_IJMatrixDestroy(mat_);
-  HYPRE_IJVectorDestroy(rhs_);
-
-  HYPRE_IJMatrixCreate(solver->comm_, iLower_, iUpper_, jLower_, jUpper_, &mat_);
-  HYPRE_IJMatrixSetObjectType(mat_, HYPRE_PARCSR);
-  HYPRE_IJMatrixInitialize(mat_);
-  HYPRE_IJMatrixGetObject(mat_, (void**)&(solver->parMat_));
-
-  HYPRE_IJVectorCreate(solver->comm_, iLower_, iUpper_, &rhs_);
-  HYPRE_IJVectorSetObjectType(rhs_, HYPRE_PARCSR);
-  HYPRE_IJVectorInitialize(rhs_);
-  HYPRE_IJVectorGetObject(rhs_, (void**)&(solver->parRhs_));
-
-  HYPRE_IJMatrixSetConstantValues(mat_, 0.0);
-  HYPRE_ParVectorSetConstantValues(solver->parRhs_, 0.0);
-
-  printf("%s %s %d : name=%s, num_rows=%lld, num_nonzeros=%lld\n",
-	 __FILE__,__FUNCTION__,__LINE__,name_.c_str(),num_rows,num_nonzeros);
-
-  std::string dir="/scratch/pmullown/nalu-wind/build_cpu_new/reg_tests/test_files/ablNeutralEdgeHypre/";
-
-  std::vector<HypreIntType> rows(num_rows+1);
-  std::vector<HypreIntType> cols(num_nonzeros);
-  std::vector<double> data(num_nonzeros);
-  std::vector<double> rhs(num_rows);
-
-  char fname[1000];
-  sprintf(fname,"%s%s_HypreRows%d.bin",dir.c_str(),name_.c_str(),numAssembles_);
-  std::ifstream file1(fname, std::ios::in | std::ios::binary);
-  file1.read((char*)rows.data(), (num_rows+1) * sizeof(HypreIntType));
-  file1.close();
-  
-  sprintf(fname,"%s%s_HypreCols%d.bin",dir.c_str(),name_.c_str(),numAssembles_);
-  std::ifstream file2(fname, std::ios::in | std::ios::binary);
-  file2.read((char*)cols.data(), (num_nonzeros) * sizeof(HypreIntType));
-  file2.close();
-  
-  sprintf(fname,"%s%s_HypreData%d.bin",dir.c_str(),name_.c_str(),numAssembles_);
-  std::ifstream file3(fname, std::ios::in | std::ios::binary);
-  file3.read((char*)data.data(), (num_nonzeros) * sizeof(double));
-  file3.close();
-  
-  sprintf(fname,"%s%s_HypreRHSData%d_0.bin",dir.c_str(),name_.c_str(),numAssembles_);
-  std::ifstream file4(fname, std::ios::in | std::ios::binary);
-  file4.read((char*)rhs.data(), (num_rows) * sizeof(double));
-  file4.close();
-
-  std::vector<HypreIntType> row_indices(num_rows);
-  std::vector<HypreIntType> row_counts(num_rows);
-  for (int i=0; i<num_rows; ++i) {
-    row_indices[i] = (HypreIntType)i;
-    row_counts[i] = (HypreIntType)(rows[i+1]-rows[i]);
-  }
-  HYPRE_IJMatrixSetValues(mat_, num_rows, row_counts.data(), row_indices.data(), cols.data(), data.data());  
-  HYPRE_IJVectorSetValues(rhs_, num_rows, row_indices.data(), rhs.data());
-
-  HYPRE_IJMatrixAssemble(mat_);
-  HYPRE_IJMatrixGetObject(mat_, (void**)&(solver->parMat_));
-
-  HYPRE_IJVectorAssemble(rhs_);
-  HYPRE_IJVectorGetObject(rhs_, (void**)&(solver->parRhs_));
-
-#endif
-
-#endif
 
   // Set flag to indicate zeroSystem that the matrix must be reinitialized
   // during the next invocation.
@@ -1189,44 +1099,24 @@ sierra::nalu::CoeffApplier* HypreLinearSystem::get_coeff_applier()
 
     /******************************************************/
     /* Construct the Partition Node Start Data structures */
-    for (unsigned i=0; i<numPartitions; ++i) {
-      for (unsigned j=0; j<numRows_; ++j) {
-	partition_node_start_host(j,i) = partitionNodeStart_[i][j];
-      }
-    }
-    Kokkos::deep_copy(partition_node_start, partition_node_start_host);
-
-    /**************************************************/
     /* Construct the Matrix Partition Data structures */
-    for (unsigned i=0; i<numPartitions; ++i) {
-      /* set the counts */
-      mat_count_host(i) = count_[i];
-      /* the number of points to assemble */
-      numMatPtsToAssembleTotal += partitionCount_[i]*mat_count_host(i);
-      /* compute the start */
-      mat_partition_start_host(i) = numMatPtsToAssembleTotal - partitionCount_[i]*mat_count_host(i);
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG
-      printf("Matrix partition %d : total in partition=%d, count per element=%d, partitionStart=%d, total=%d\n",
-	     i,(int)partitionCount_[i],(int)mat_count_host(i),(int)mat_partition_start_host(i),(int)numMatPtsToAssembleTotal);
-#endif
-    }
-    Kokkos::deep_copy(mat_count, mat_count_host);
-    Kokkos::deep_copy(mat_partition_start, mat_partition_start_host);
-
-    /***********************************************/
     /* Construct the Rhs Partition Data structures */
     for (unsigned i=0; i<numPartitions; ++i) {
-      /* set the counts */
+      mat_count_host(i) = count_[i];
       rhs_count_host(i) = sqrt(count_[i]);
-      /* se the number of points to assemble */
+
+      numMatPtsToAssembleTotal += partitionCount_[i]*mat_count_host(i);
+      mat_partition_start_host(i) = numMatPtsToAssembleTotal - partitionCount_[i]*mat_count_host(i);
+
       numRhsPtsToAssembleTotal += partitionCount_[i]*rhs_count_host(i);
-      /* compute the start */
       rhs_partition_start_host(i) = numRhsPtsToAssembleTotal - partitionCount_[i]*rhs_count_host(i);
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG
-      printf("Rhs partition %d : total in partition=%d, count per element=%d, partitionStart=%d, total=%d\n",
-	     i,(int)partitionCount_[i],(int)rhs_count_host(i),(int)rhs_partition_start_host(i),(int)numRhsPtsToAssembleTotal);
-#endif
+
+      for (unsigned j=0; j<numRows_; ++j)
+	partition_node_start_host(j,i) = partitionNodeStart_[i][j];
     }
+    Kokkos::deep_copy(partition_node_start, partition_node_start_host);
+    Kokkos::deep_copy(mat_count, mat_count_host);
+    Kokkos::deep_copy(mat_partition_start, mat_partition_start_host);
     Kokkos::deep_copy(rhs_count, rhs_count_host);
     Kokkos::deep_copy(rhs_partition_start, rhs_partition_start_host);
 
@@ -1303,40 +1193,15 @@ HypreLinearSystem::HypreLinSysCoeffApplier::HypreLinSysCoeffApplier(unsigned num
   /* This 2D array gets atomically incremented each time we read the hid of the first
      node in each group of entities */
   partition_node_count_ = HypreIntTypeView2D("partition_node_count_", numRows_, numPartitions_);
-  Kokkos::deep_copy(partition_node_count_, 0);
-
-  /* get host copies of these */
-  mat_partition_start_host = Kokkos::create_mirror_view(mat_partition_start_);
-  rhs_partition_start_host = Kokkos::create_mirror_view(rhs_partition_start_);
-  mat_count_host = Kokkos::create_mirror_view(mat_count_);
-  rhs_count_host = Kokkos::create_mirror_view(rhs_count_);
-  Kokkos::deep_copy(mat_partition_start_host, mat_partition_start_);
-  Kokkos::deep_copy(rhs_partition_start_host, rhs_partition_start_);
-  Kokkos::deep_copy(mat_count_host, mat_count_);
-  Kokkos::deep_copy(rhs_count_host, rhs_count_);
 
   /* storage for the matrix lists */
   rows_ = HypreIntTypeView("rows_",numMatPtsToAssembleTotal_ + numRows_);
   cols_ = HypreIntTypeView("cols_",numMatPtsToAssembleTotal_ + numRows_);
   vals_ = DoubleView("vals_",numMatPtsToAssembleTotal_ + numRows_);
-  Kokkos::deep_copy(rows_, -1);
-  Kokkos::deep_copy(cols_, -1);
-  Kokkos::deep_copy(vals_, 0);
-
-  /* create mirrors */
-  rows_host = Kokkos::create_mirror_view(rows_);
-  cols_host = Kokkos::create_mirror_view(cols_);
-  vals_host = Kokkos::create_mirror_view(vals_);
 
   /* storage for the rhs lists */
   rhs_rows_ = HypreIntTypeView2D("rhs_rows_", numRhsPtsToAssembleTotal_ + numRows_, numDof_);
   rhs_vals_ = DoubleView2D("rhs_vals_", numRhsPtsToAssembleTotal_ + numRows_, numDof_);
-  Kokkos::deep_copy(rhs_rows_, -1);
-  Kokkos::deep_copy(rhs_vals_, 0);
-
-  /* create mirrors */
-  rhs_rows_host = Kokkos::create_mirror_view(rhs_rows_);
-  rhs_vals_host = Kokkos::create_mirror_view(rhs_vals_);
 
   /* initialize the row filled status vector */
   row_filled_ = Kokkos::View<RowFillStatus*>("row_filled_",numRows_);  
@@ -1383,6 +1248,7 @@ HypreLinearSystem::HypreLinSysCoeffApplier::sum_into(
   HypreIntType rhsIndex = rhs_partition_start_(partitionIndex) + (nodeStart + counter)*rhs_count_(partitionIndex);
 
   HypreIntType numRows = numEntities * numDof;
+
   for(unsigned i=0; i<numEntities; i++) {
     HypreIntType hid = entityToLID_[entities[i].local_offset()];
     for(unsigned d=0; d<numDof; ++d) {
@@ -1404,9 +1270,10 @@ HypreLinearSystem::HypreLinSysCoeffApplier::sum_into(
 
       /* fill the matrix values */
       for (unsigned k=0; k<numRows; k++) {
-	rows_(matIndex+i*numRows+k) = lid;
-	cols_(matIndex+i*numRows+k) = localIds[k];
-	vals_(matIndex+i*numRows+k) = cur_lhs[k];
+	unsigned index = i*numRows+k;
+	rows_(matIndex+index) = lid;
+	cols_(matIndex+index) = localIds[k];
+	vals_(matIndex+index) = cur_lhs[k];
       }
       /* fill the right hand side values */
       rhs_rows_(rhsIndex+i,0) = lid;
@@ -1440,6 +1307,13 @@ void HypreLinearSystem::HypreLinSysCoeffApplier::dumpData(std::string name, cons
 #ifdef HYPRE_LINEAR_SYSTEM_DEBUG
   printf("matCount=%d, rhsCount=%d\n",matCount,rhsCount);
 #endif
+
+  /* create mirrors */
+  HypreIntTypeViewHost rows_host = Kokkos::create_mirror_view(rows_);
+  HypreIntTypeViewHost cols_host = Kokkos::create_mirror_view(cols_);
+  DoubleViewHost vals_host = Kokkos::create_mirror_view(vals_);
+  HypreIntTypeView2DHost rhs_rows_host = Kokkos::create_mirror_view(rhs_rows_);
+  DoubleView2DHost rhs_vals_host = Kokkos::create_mirror_view(rhs_vals_);
 
   Kokkos::deep_copy(rows_host, rows_);
   Kokkos::deep_copy(cols_host, cols_);
@@ -1694,113 +1568,6 @@ HypreLinearSystem::HypreLinSysCoeffApplier::finishAssembly(void * mat, std::vect
 
 #ifdef KOKKOS_ENABLE_CUDA
 
-#ifdef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
-
-  char fname[1000];
-  std::string dir="/scratch/pmullown/nalu-wind/build_cpu_new/reg_tests/test_files/ablNeutralEdgeHypre/";
-
-  sprintf(fname,"%s/%s_metaData%d.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file(fname, std::ios::in | std::ios::binary);
-  long pos = file.tellg();
-  int intTypeSize=4;
-  std::vector<HypreIntType> metaData(6);
-  file.read((char*)(&intTypeSize), sizeof(int));
-  file.seekg(pos+4);
-  file.read((char*)metaData.data(), 6 * sizeof(HypreIntType));
-  file.close();
-
-  int r0 = metaData[0];
-  int c0 = metaData[2];
-  int num_rows = metaData[1]+1-r0;
-  int num_cols = metaData[3]+1-c0;
-  HypreIntType nDataPtsToAssemble = metaData[4];
-  HypreIntType nvDataPtsToAssemble = metaData[5];
-
-  HypreIntType * rows = (HypreIntType *)malloc(nDataPtsToAssemble*sizeof(HypreIntType));
-  HypreIntType * cols = (HypreIntType *)malloc(nDataPtsToAssemble*sizeof(HypreIntType));
-  double * data = (double *)malloc(nDataPtsToAssemble*sizeof(double));
-  HypreIntType * rhsRows = (HypreIntType *)malloc(nvDataPtsToAssemble*sizeof(HypreIntType));
-  double * rhsData = (double *)malloc(nvDataPtsToAssemble*sizeof(double));
-
-  sprintf(fname,"%s/%s_rowIndices%d.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file1(fname, std::ios::in | std::ios::binary);
-  file1.read((char*)rows, nDataPtsToAssemble * sizeof(HypreIntType));
-  file1.close();
-
-  sprintf(fname,"%s/%s_colIndices%d.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file2(fname, std::ios::in | std::ios::binary);
-  file2.read((char*)cols, nDataPtsToAssemble * sizeof(HypreIntType));
-  file2.close();
-
-  sprintf(fname,"%s/%s_values%d.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file3(fname, std::ios::in | std::ios::binary);
-  file3.read((char*)data, nDataPtsToAssemble * sizeof(double));
-  file3.close();
-
-  sprintf(fname,"%s/%s_rhsRowIndices%d_0.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file4(fname, std::ios::in | std::ios::binary);
-  file4.read((char*)rhsRows, nvDataPtsToAssemble * sizeof(HypreIntType));
-  file4.close();
-
-  sprintf(fname,"%s/%s_rhsValues%d_0.bin",dir.c_str(),name.c_str(),di);
-  std::ifstream file5(fname, std::ios::in | std::ios::binary);
-  file5.read((char*)rhsData, nvDataPtsToAssemble * sizeof(double));
-  file5.close();
-
-  /**********/
-  /* Matrix */
-  /**********/
-
-  /* Build the assembler objects */
-  if (!MatAssembler_)
-    MatAssembler_ = new MatrixAssembler<HypreIntType>(name,true,iLower_,jLower_,numRows_,numRows_,nDataPtsToAssemble);
-
-  MatAssembler_->copySrcDataToDevice(rows, cols, data);
-  MatAssembler_->assemble();
-  MatAssembler_->copyAssembledCSRMatrixToHost();  
-  int * row_offsets = MatAssembler_->getHostRowOffsetsPtr();
-  HypreIntType * col_indices = MatAssembler_->getHostColIndicesPtr();
-  double * values = MatAssembler_->getHostValuesPtr();
-
-  std::vector<HypreIntType> row_indices(numRows_);
-  std::vector<HypreIntType> row_counts(numRows_);
-  for (int i=0; i<numRows_; ++i) {
-    row_indices[i] = (HypreIntType)i;
-    row_counts[i] = (HypreIntType)(row_offsets[i+1]-row_offsets[i]);
-  }
-
-  /* Cast these to their types ... ugly */
-  HYPRE_IJMatrix hmat = *((HYPRE_IJMatrix *)mat);
-  HYPRE_IJMatrixSetValues(hmat, numRows_, row_counts.data(), row_indices.data(), col_indices, values);  
-
-  /********/
-  /* Rhs */
-  /********/
-
-  /* Build the assembler objects */
-  if (!RhsAssembler_)
-    RhsAssembler_ = new RhsAssembler<HypreIntType>(name,true,iLower_,numRows_,nvDataPtsToAssemble);
-
-  for (unsigned i=0; i<numDof_; ++i) {
-    /* get the src data from the kokkos views */
-    RhsAssembler_->copySrcDataToDevice(rhsRows, rhsData);
-    RhsAssembler_->assemble();
-    RhsAssembler_->copyAssembledRhsVectorToHost();  
-    double * values = RhsAssembler_->getHostRhsPtr();
-    
-    /* Cast these to their types ... ugly */
-    HYPRE_IJVector hrhs = *((HYPRE_IJVector *)rhs[i]);
-    HYPRE_IJVectorSetValues(hrhs, numRows_, row_indices.data(), values);
-  }
-
-  free(rows);
-  free(cols);
-  free(data);
-  free(rhsRows);
-  free(rhsData);
-
-#else
-
   /**********/
   /* Matrix */
   /**********/
@@ -1824,9 +1591,19 @@ HypreLinearSystem::HypreLinSysCoeffApplier::finishAssembly(void * mat, std::vect
     row_counts[i] = (HypreIntType)(row_offsets[i+1]-row_offsets[i]);
   }
 
+  /* record the start time */
+  struct timeval _start, _stop;
+  gettimeofday(&_start, NULL);
+
   /* Cast these to their types ... ugly */
   HYPRE_IJMatrix hmat = *((HYPRE_IJMatrix *)mat);
   HYPRE_IJMatrixSetValues(hmat, numRows_, row_counts.data(), row_indices.data(), col_indices, values);  
+
+  /* record the stop time */
+  gettimeofday(&_stop, NULL);
+  double msec = (double)(_stop.tv_usec - _start.tv_usec) / 1.e3 + 1.e3*((double)(_stop.tv_sec - _start.tv_sec));
+  _assembleMatTime+=msec;
+  _nAssembleMat++;
 
   /********/
   /* Rhs */
@@ -1843,12 +1620,19 @@ HypreLinearSystem::HypreLinSysCoeffApplier::finishAssembly(void * mat, std::vect
     RhsAssembler_->copyAssembledRhsVectorToHost();  
     double * values = RhsAssembler_->getHostRhsPtr();
     
+    /* record the start time */
+    gettimeofday(&_start, NULL);
+
     /* Cast these to their types ... ugly */
     HYPRE_IJVector hrhs = *((HYPRE_IJVector *)rhs[i]);
     HYPRE_IJVectorSetValues(hrhs, numRows_, row_indices.data(), values);
-  }
 
-#endif //HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
+    /* record the stop time */
+    gettimeofday(&_stop, NULL);
+    double msec = (double)(_stop.tv_usec - _start.tv_usec) / 1.e3 + 1.e3*((double)(_stop.tv_sec - _start.tv_sec));
+    _assembleRhsTime+=msec;
+    _nAssembleRhs++;
+  }
 
 #endif //KOKKOS_ENABLE_CUDA
 
@@ -1876,13 +1660,13 @@ HypreLinearSystem::HypreLinSysCoeffApplier::resetInternalData() {
 
     Kokkos::deep_copy(checkSkippedRows_, 1);
     if (partition_index_host()==0) {
-      Kokkos::deep_copy(partition_node_count_, 0);
       Kokkos::deep_copy(row_filled_, RS_UNFILLED);
+      Kokkos::deep_copy(partition_node_count_, 0);
       Kokkos::deep_copy(rows_, -1);
       Kokkos::deep_copy(cols_, -1);
-      Kokkos::deep_copy(vals_, 0.);
+      Kokkos::deep_copy(vals_, 0);
       Kokkos::deep_copy(rhs_rows_, -1);
-      Kokkos::deep_copy(rhs_vals_, 0.);      
+      Kokkos::deep_copy(rhs_vals_, 0);
     }
 
 #ifdef HYPRE_LINEAR_SYSTEM_DEBUG
@@ -2294,15 +2078,7 @@ HypreLinearSystem::copy_hypre_to_stk(
   double * local_data = hypre_VectorData(hypre_ParVectorLocalVector(solver->parSln_));
 
   char fname[200];
-#if !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS) && !defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU)
   std::string extension="";
-#else
-#if defined(HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS)
-  std::string extension="FromCPULoadLists";
-#else
-  std::string extension="FromCPULoad";
-#endif
-#endif
   sprintf(fname,"%s_HypreSolution%s%d.bin",name_.c_str(),extension.c_str(),numAssembles_);
 
   std::ofstream slnfile(fname, std::ios::out | std::ios::binary);

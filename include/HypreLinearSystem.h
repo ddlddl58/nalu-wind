@@ -25,7 +25,6 @@
 
 #include <unordered_set>
 
-
 #ifndef HYPRE_LINEAR_SYSTEM_DEBUG
 #define HYPRE_LINEAR_SYSTEM_DEBUG
 #endif // HYPRE_LINEAR_SYSTEM_DEBUG
@@ -34,17 +33,7 @@
 #ifndef HYPRE_LINEAR_SYSTEM_DEBUG_DUMP
 #define HYPRE_LINEAR_SYSTEM_DEBUG_DUMP
 #endif // HYPRE_LINEAR_SYSTEM_DEBUG_DUMP
-//#undef HYPRE_LINEAR_SYSTEM_DEBUG_DUMP
-
-#ifndef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU
-#define HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU
-#endif // HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU
-#undef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU
-
-#ifndef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
-#define HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
-#endif // HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
-#undef HYPRE_LINEAR_SYSTEM_DEBUG_LOAD_FROM_CPU_LISTS
+#undef HYPRE_LINEAR_SYSTEM_DEBUG_DUMP
 
 #include "LinearSystemAssembler.h"
 #include "Kokkos_UnorderedMap.hpp"
@@ -183,6 +172,12 @@ public:
 #ifdef KOKKOS_ENABLE_CUDA
       if (MatAssembler_) { delete MatAssembler_; MatAssembler_=NULL; }
       if (RhsAssembler_) { delete RhsAssembler_; RhsAssembler_=NULL; }
+      if (_nAssembleMat>0) {
+	printf("\tMean HYPRE_IJMatrixSetValues Time (%d samples)=%1.5f   Total=%1.5f\n",
+	       _nAssembleMat, _assembleMatTime/_nAssembleMat,_assembleMatTime);
+	printf("\tMean HYPRE_IJVectorSetValues Time (%d samples)=%1.5f   Total=%1.5f\n",
+	       _nAssembleRhs, _assembleRhsTime/_nAssembleRhs,_assembleRhsTime);
+      }
 #endif
     }
 
@@ -273,11 +268,6 @@ public:
     //! 2D data structure to atomically update for augmenting the list */
     HypreIntTypeView2D partition_node_count_;
 
-    HypreIntTypeViewHost mat_count_host;
-    HypreIntTypeViewHost rhs_count_host;
-    HypreIntTypeViewHost mat_partition_start_host;
-    HypreIntTypeViewHost rhs_partition_start_host;
-
     HypreIntTypeViewScalar mat_partition_total_;
     HypreIntTypeViewScalar rhs_partition_total_;    
     
@@ -302,15 +292,11 @@ public:
     Kokkos::View<RowFillStatus*> row_filled_;
 
     //! mirror views
-    HypreIntTypeViewHost rows_host;
-    HypreIntTypeViewHost cols_host;
-    DoubleViewHost vals_host;
-    HypreIntTypeView2DHost rhs_rows_host;
-    DoubleView2DHost rhs_vals_host;
     Kokkos::View<RowFillStatus*>::HostMirror row_filled_host;
 
     //! Total number of rows owned by this particular MPI rank
     HypreIntType numRows_;
+
     //! Flag indicating that sumInto should check to see if rows must be skipped
     HypreIntTypeViewScalar checkSkippedRows_;
 
@@ -319,6 +305,11 @@ public:
     MatrixAssembler<HypreIntType> * MatAssembler_=nullptr;
     //! The Rhs assembler
     RhsAssembler<HypreIntType> * RhsAssembler_=nullptr;
+
+    float _assembleMatTime=0.f;
+    float _assembleRhsTime=0.f;
+    int _nAssembleMat=0;
+    int _nAssembleRhs=0;
 #endif
   };
 
